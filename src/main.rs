@@ -76,7 +76,6 @@ pub struct IndexOutOfBoundsError;
 pub struct SquareGraph {
     dimension: usize,
     nodes: Vec<EdgeSet>,
-    visited: Vec<bool>,
 }
 
 impl SquareGraph {
@@ -153,7 +152,6 @@ impl SquareGraph {
         let mut graph = Self {
             dimension,
             nodes: vec![Default::default(); dimension * dimension],
-            visited: vec![Default::default(); dimension * dimension],
         };
 
         for op in config {
@@ -195,30 +193,21 @@ impl SquareGraph {
 
         graph
     }
-
-    pub fn set_visited_at(&mut self, node: Node) -> Result<(), IndexOutOfBoundsError> {
-        let idx = self.index(node).ok_or(IndexOutOfBoundsError)?;
-        self.visited[idx] = true;
-        Ok(())
-    }
-
-    pub fn is_visited_at(&self, node: Node) -> Result<bool, IndexOutOfBoundsError> {
-        let idx = self.index(node).ok_or(IndexOutOfBoundsError)?;
-        Ok(self.visited[idx])
-    }
 }
 
 #[derive(Clone)]
-struct Search {
-    graph: SquareGraph,
+struct Search<'a> {
+    graph: &'a SquareGraph,
+    visited: Vec<bool>,
     moves: Vec<Option<Direction>>,
 }
 
-impl Search {
-    pub fn new(graph: SquareGraph) -> Self {
+impl<'a> Search<'a> {
+    pub fn new(graph: &'a SquareGraph) -> Self {
         let dim = graph.dimension();
         Self {
             graph,
+            visited: vec![false; dim * dim],
             moves: vec![None; dim * dim],
         }
     }
@@ -227,7 +216,19 @@ impl Search {
         self.graph.index(node)
     }
 
-    pub fn size(&self) -> usize {
+    fn update_visited(&self, node: Node) -> Result<Vec<bool>, IndexOutOfBoundsError> {
+        let idx = self.index(node).ok_or(IndexOutOfBoundsError)?;
+        let mut visited = self.visited.clone();
+        visited[idx] = true;
+        Ok(visited)
+    }
+
+    fn has_visited_at(&self, node: Node) -> Result<bool, IndexOutOfBoundsError> {
+        let idx = self.index(node).ok_or(IndexOutOfBoundsError)?;
+        Ok(self.visited[idx])
+    }
+
+    pub fn depth(&self) -> usize {
         self.graph.dimension().pow(2)
     }
 
@@ -236,16 +237,21 @@ impl Search {
         if let Some(edge_set) = self.graph.node(node) {
             if edge_set.contains(direction) {
                 if let Some(into) = self.graph.neighbor(edge) {
-                    if let Ok(false) = self.graph.is_visited_at(into) {
+                    if let Ok(false) = self.has_visited_at(into) {
                         let (node, direction) = edge;
 
-                        let mut graph = self.graph.clone();
-                        graph.set_visited_at(node).unwrap();
-
+                        let visited = self.update_visited(node).unwrap();
                         let mut moves = self.moves.clone();
                         moves[self.index(node).unwrap()] = Some(direction);
 
-                        return Some((Self { graph, moves }, into));
+                        return Some((
+                            Self {
+                                graph: self.graph,
+                                visited,
+                                moves,
+                            },
+                            into,
+                        ));
                     }
                 }
             }
@@ -254,7 +260,7 @@ impl Search {
     }
 }
 
-impl std::fmt::Display for Search {
+impl<'a> std::fmt::Display for Search<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for y in 0..self.graph.dimension() {
             for x in 0..self.graph.dimension() {
@@ -293,16 +299,16 @@ impl std::fmt::Display for Search {
     }
 }
 
-struct DepthFirstSearch {
-    search: Option<Search>,
+struct DepthFirstSearch<'a> {
+    search: Option<Search<'a>>,
     from: Node,
     max_turns: usize,
     opts: Cli,
-    solutions: Vec<(Search, usize)>,
+    solutions: Vec<(Search<'a>, usize)>,
 }
 
-impl DepthFirstSearch {
-    pub fn new(search: Search, from: Node, max_turns: usize, opts: Cli) -> Self {
+impl<'a> DepthFirstSearch<'a> {
+    pub fn new(search: Search<'a>, from: Node, max_turns: usize, opts: Cli) -> Self {
         Self {
             search: Some(search),
             from,
@@ -314,7 +320,7 @@ impl DepthFirstSearch {
 
     fn dfs(
         &mut self,
-        search: Search,
+        search: Search<'a>,
         from: Node,
         prev_dir: Option<Direction>,
         turns: usize,
@@ -331,7 +337,7 @@ impl DepthFirstSearch {
             println!("turns = {turns}    depth = {depth}");
         }
 
-        if depth == search.size() {
+        if depth == search.depth() {
             self.solutions.push((search, turns));
             if !self.opts.render {
                 println!("Solution {} found", self.solutions.len());
@@ -353,11 +359,14 @@ impl DepthFirstSearch {
                     turns + prev_dir.and_then(|p| (p != dir).then(|| 1)).unwrap_or(0),
                     depth + 1,
                 );
+                if self.opts.first && !self.solutions.is_empty() {
+                    return;
+                }
             }
         }
     }
 
-    pub fn run(mut self) -> Vec<(Search, usize)> {
+    pub fn run(mut self) -> Vec<(Search<'a>, usize)> {
         let search = self.search.take().unwrap();
         self.dfs(search, self.from, None, 0, 1);
         self.solutions
@@ -372,6 +381,15 @@ struct Cli {
     /// Animation frame delay in milliseconds
     #[clap(short, long, default_value_t = 33, requires = "render")]
     animation_delay: u64,
+    /// Stop after one solution
+    #[clap(short, long)]
+    first: bool,
+    /// Starting point y-coordinate on the grid
+    #[clap(default_value_t = 6)]
+    starting_point_y: usize,
+    /// Starting point x-coordinate on the grid
+    #[clap(default_value_t = 2)]
+    starting_point_x: usize,
 }
 
 fn main() {
@@ -384,9 +402,14 @@ fn main() {
             GraphOperation::RemoveBidirectional(((7, 3), Direction::East)),
         ],
     );
-    let search = Search::new(graph);
+    let search = Search::new(&graph);
     let turns = 14;
-    let dfs = DepthFirstSearch::new(search, (6, 2), turns, opts);
+    let dfs = DepthFirstSearch::new(
+        search,
+        (opts.starting_point_y, opts.starting_point_x),
+        turns,
+        opts,
+    );
 
     let routes = dfs.run();
     for (route, turns) in &routes {
