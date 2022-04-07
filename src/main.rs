@@ -1,8 +1,7 @@
-use ansi_term::{ANSIString, Color};
+use clap::Parser;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Direction {
-    Nowhere = 0b0000,
     North = 0b0001,
     East = 0b0010,
     South = 0b0100,
@@ -12,7 +11,6 @@ pub enum Direction {
 impl Direction {
     pub fn inverse(&self) -> Self {
         match self {
-            Self::Nowhere => Self::Nowhere,
             Self::North => Self::South,
             Self::South => Self::North,
             Self::East => Self::West,
@@ -105,7 +103,6 @@ impl SquareGraph {
 
     pub fn neighbor(&self, ((y, x), dir): Edge) -> Option<Node> {
         match dir {
-            Direction::Nowhere => Some((y, x)),
             Direction::North => {
                 if y > 0 {
                     Some((y - 1, x))
@@ -214,7 +211,7 @@ impl SquareGraph {
 #[derive(Clone)]
 struct Search {
     graph: SquareGraph,
-    moves: Vec<Direction>,
+    moves: Vec<Option<Direction>>,
 }
 
 impl Search {
@@ -222,7 +219,7 @@ impl Search {
         let dim = graph.dimension();
         Self {
             graph,
-            moves: vec![Direction::Nowhere; dim * dim],
+            moves: vec![None; dim * dim],
         }
     }
 
@@ -246,7 +243,7 @@ impl Search {
                         graph.set_visited_at(node).unwrap();
 
                         let mut moves = self.moves.clone();
-                        moves[self.index(node).unwrap()] = direction;
+                        moves[self.index(node).unwrap()] = Some(direction);
 
                         return Some((Self { graph, moves }, into));
                     }
@@ -261,24 +258,16 @@ impl std::fmt::Display for Search {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for y in 0..self.graph.dimension() {
             for x in 0..self.graph.dimension() {
-                write!(f, "{}", {
-                    let string = self.graph.node((y, x)).unwrap().to_string();
-                    if let Ok(true) = self.graph.is_visited_at((y, x)) {
-                        Color::Red.paint(string)
-                    } else {
-                        ANSIString::from(string)
-                    }
-                })?;
+                write!(f, "{}", self.graph.node((y, x)).unwrap())?;
                 write!(
                     f,
                     "{}",
                     match (
-                        self.index((y, x)).map(|idx| self.moves[idx]),
-                        self.index((y, x + 1)).map(|idx| self.moves[idx]),
+                        self.index((y, x)).and_then(|idx| self.moves[idx]),
+                        self.index((y, x + 1)).and_then(|idx| self.moves[idx]),
                     ) {
-                        (Some(Direction::East), _) | (_, Some(Direction::West)) =>
-                            Color::Red.paint("─"),
-                        _ => ANSIString::from(" "),
+                        (Some(Direction::East), _) | (_, Some(Direction::West)) => "───",
+                        _ => "   ",
                     }
                 )?;
             }
@@ -289,12 +278,11 @@ impl std::fmt::Display for Search {
                         f,
                         "{}",
                         match (
-                            self.index((y, x)).map(|idx| self.moves[idx]),
-                            self.index((y + 1, x)).map(|idx| self.moves[idx]),
+                            self.index((y, x)).and_then(|idx| self.moves[idx]),
+                            self.index((y + 1, x)).and_then(|idx| self.moves[idx]),
                         ) {
-                            (Some(Direction::South), _) | (_, Some(Direction::North)) =>
-                                Color::Red.paint("│ "),
-                            _ => ANSIString::from("  "),
+                            (Some(Direction::South), _) | (_, Some(Direction::North)) => "│   ",
+                            _ => "    ",
                         }
                     )?;
                 }
@@ -309,72 +297,86 @@ struct DepthFirstSearch {
     search: Option<Search>,
     from: Node,
     max_turns: usize,
-    render: bool,
-    previous_direction: Direction,
-    solutions: Vec<Search>,
+    opts: Cli,
+    solutions: Vec<(Search, usize)>,
 }
 
 impl DepthFirstSearch {
-    pub fn new(search: Search, from: Node, max_turns: usize, render: bool) -> Self {
+    pub fn new(search: Search, from: Node, max_turns: usize, opts: Cli) -> Self {
         Self {
             search: Some(search),
             from,
             max_turns,
-            render,
-            previous_direction: Direction::Nowhere,
+            opts,
             solutions: Vec::new(),
         }
     }
 
-    fn dfs(&mut self, search: Search, from: Node, turns: usize, n: usize) {
-        if self.render {
-            std::thread::sleep(std::time::Duration::from_millis(1000 / 60));
-            print!("\x1B[2J\x1B[1;1H");
-            println!("{search}");
-            println!("turns = {turns}    n = {n}");
-        }
-
+    fn dfs(
+        &mut self,
+        search: Search,
+        from: Node,
+        prev_dir: Option<Direction>,
+        turns: usize,
+        depth: usize,
+    ) {
         if turns > self.max_turns {
             return;
         };
 
-        if n == search.size() {
-            self.solutions.push(search);
+        if self.opts.render {
+            std::thread::sleep(std::time::Duration::from_millis(self.opts.animation_delay));
+            print!("\x1B[2J\x1B[1;1H");
+            println!("{search}");
+            println!("turns = {turns}    depth = {depth}");
+        }
+
+        if depth == search.size() {
+            self.solutions.push((search, turns));
+            if !self.opts.render {
+                println!("Solution {} found", self.solutions.len());
+            }
             return;
         }
 
-        for direction in [
+        for dir in [
             Direction::North,
             Direction::East,
             Direction::South,
             Direction::West,
         ] {
-            if let Some((search, node)) = search.advance((from, direction)) {
-                let prev = self.previous_direction;
-                self.previous_direction = direction;
+            if let Some((search, node)) = search.advance((from, dir)) {
                 self.dfs(
                     search,
                     node,
-                    turns
-                        + if direction != prev && prev != Direction::Nowhere {
-                            1
-                        } else {
-                            0
-                        },
-                    n + 1,
+                    Some(dir),
+                    turns + prev_dir.and_then(|p| (p != dir).then(|| 1)).unwrap_or(0),
+                    depth + 1,
                 );
             }
         }
     }
 
-    pub fn run(mut self) -> Vec<Search> {
+    pub fn run(mut self) -> Vec<(Search, usize)> {
         let search = self.search.take().unwrap();
-        self.dfs(search, self.from, 0, 1);
+        self.dfs(search, self.from, None, 0, 1);
         self.solutions
     }
 }
 
+#[derive(Parser)]
+struct Cli {
+    /// Render an animation of the search progress
+    #[clap(short, long)]
+    render: bool,
+    /// Animation frame delay in milliseconds
+    #[clap(short, long, default_value_t = 33, requires = "render")]
+    animation_delay: u64,
+}
+
 fn main() {
+    let opts = Cli::parse();
+
     let graph = SquareGraph::new(
         8,
         &[
@@ -384,10 +386,11 @@ fn main() {
     );
     let search = Search::new(graph);
     let turns = 14;
-    let dfs = DepthFirstSearch::new(search, (6, 2), turns, false);
+    let dfs = DepthFirstSearch::new(search, (6, 2), turns, opts);
 
     let routes = dfs.run();
-    for route in &routes {
+    for (route, turns) in &routes {
+        println!("With {turns} turns:");
         println!("{route}");
     }
     if routes.is_empty() {
