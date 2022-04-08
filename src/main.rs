@@ -1,6 +1,9 @@
+use anyhow::{Context, Result};
 use clap::Parser;
+use serde::Deserialize;
+use std::path::PathBuf;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 pub enum Direction {
     North = 0b0001,
     East = 0b0010,
@@ -62,7 +65,7 @@ impl std::fmt::Display for EdgeSet {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub enum GraphOperation {
     InterconnectAll,
     AddBidirectional(Edge),
@@ -80,11 +83,10 @@ pub struct SquareGraph {
 
 impl SquareGraph {
     pub fn index(&self, node: Node) -> Option<usize> {
-        let idx = node.0 * self.dimension + node.1;
-        if idx >= self.nodes.len() {
-            None
+        if node.0 < self.dimension && node.1 < self.dimension {
+            Some(node.0 * self.dimension + node.1)
         } else {
-            Some(idx)
+            None
         }
     }
 
@@ -302,18 +304,28 @@ impl<'a> std::fmt::Display for Search<'a> {
 struct DepthFirstSearch<'a> {
     search: Option<Search<'a>>,
     from: Node,
-    max_turns: usize,
-    opts: Cli,
+    max_turns: Option<usize>,
+    animate: Option<u64>,
+    first: bool,
+    step: usize,
     solutions: Vec<(Search<'a>, usize)>,
 }
 
 impl<'a> DepthFirstSearch<'a> {
-    pub fn new(search: Search<'a>, from: Node, max_turns: usize, opts: Cli) -> Self {
+    pub fn new(
+        graph: &'a SquareGraph,
+        from: Node,
+        max_turns: Option<usize>,
+        animate: Option<u64>,
+        first: bool,
+    ) -> Self {
         Self {
-            search: Some(search),
+            search: Some(Search::new(&graph)),
             from,
             max_turns,
-            opts,
+            animate,
+            first,
+            step: 0,
             solutions: Vec::new(),
         }
     }
@@ -326,20 +338,24 @@ impl<'a> DepthFirstSearch<'a> {
         turns: usize,
         depth: usize,
     ) {
-        if turns > self.max_turns {
-            return;
-        };
+        if let Some(max) = self.max_turns {
+            if turns > max {
+                return;
+            };
+        }
 
-        if self.opts.render {
-            std::thread::sleep(std::time::Duration::from_millis(self.opts.animation_delay));
+        self.step += 1;
+
+        if let Some(delay) = self.animate {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
             print!("\x1B[2J\x1B[1;1H");
             println!("{search}");
-            println!("turns = {turns}    depth = {depth}");
+            println!("step = {}    turns = {turns}    depth = {depth}", self.step);
         }
 
         if depth == search.depth() {
             self.solutions.push((search, turns));
-            if !self.opts.render {
+            if self.animate.is_none() {
                 println!("Solution {} found", self.solutions.len());
             }
             return;
@@ -359,7 +375,7 @@ impl<'a> DepthFirstSearch<'a> {
                     turns + prev_dir.and_then(|p| (p != dir).then(|| 1)).unwrap_or(0),
                     depth + 1,
                 );
-                if self.opts.first && !self.solutions.is_empty() {
+                if self.first && !self.solutions.is_empty() {
                     return;
                 }
             }
@@ -373,42 +389,121 @@ impl<'a> DepthFirstSearch<'a> {
     }
 }
 
+#[derive(Deserialize)]
+struct Problem {
+    size: usize,
+    start: Option<Node>,
+    max_turns: Option<usize>,
+    graph_ops: Vec<GraphOperation>,
+}
+
+impl Default for Problem {
+    fn default() -> Self {
+        Self::new(8)
+            .start_from((6, 2))
+            .max_turns(14)
+            .operation(GraphOperation::InterconnectAll)
+            .operation(GraphOperation::RemoveBidirectional((
+                (7, 3),
+                Direction::East,
+            )))
+    }
+}
+
+impl Problem {
+    fn new(size: usize) -> Self {
+        Self {
+            size,
+            start: None,
+            max_turns: None,
+            graph_ops: Vec::new(),
+        }
+    }
+
+    fn operation(mut self, op: GraphOperation) -> Self {
+        self.graph_ops.push(op);
+        self
+    }
+
+    fn start_from(mut self, node: Node) -> Self {
+        self.start = Some(node);
+        self
+    }
+
+    fn max_turns(mut self, turns: usize) -> Self {
+        self.max_turns = Some(turns);
+        self
+    }
+
+    fn build(self) -> (SquareGraph, Option<Node>, Option<usize>) {
+        (
+            SquareGraph::new(self.size, &self.graph_ops),
+            self.start,
+            self.max_turns,
+        )
+    }
+}
+
 #[derive(Parser)]
 struct Cli {
-    /// Render an animation of the search progress
+    /// Output an animation of the search progress
     #[clap(short, long)]
-    render: bool,
+    animate: bool,
     /// Animation frame delay in milliseconds
-    #[clap(short, long, default_value_t = 33, requires = "render")]
-    animation_delay: u64,
+    #[clap(short, long, default_value_t = 33, requires = "animate")]
+    delay: u64,
     /// Stop after one solution
     #[clap(short, long)]
     first: bool,
+    /// Load graph from json file instead of using built-in
+    #[clap(short, long)]
+    graph: Option<PathBuf>,
+    /// Maximum number of direction changes allowed during route
+    #[clap(short, long)]
+    max_turns: Option<usize>,
     /// Starting point y-coordinate on the grid
-    #[clap(default_value_t = 6)]
-    starting_point_y: usize,
+    #[clap(requires = "starting-point-x")]
+    starting_point_y: Option<usize>,
     /// Starting point x-coordinate on the grid
-    #[clap(default_value_t = 2)]
-    starting_point_x: usize,
+    starting_point_x: Option<usize>,
 }
 
-fn main() {
+fn main() -> Result<()> {
     let opts = Cli::parse();
 
-    let graph = SquareGraph::new(
-        8,
-        &[
-            GraphOperation::InterconnectAll,
-            GraphOperation::RemoveBidirectional(((7, 3), Direction::East)),
-        ],
-    );
-    let search = Search::new(&graph);
-    let turns = 14;
+    // Parse problem
+    let (graph, start, turns) = match &opts.graph {
+        None => Problem::default(),
+        Some(path) => {
+            let file =
+                std::fs::File::open(path).context(format!("Failed to open {}", path.display()))?;
+            serde_json::de::from_reader(file)
+                .context(format!("Failed to parse {}", path.display()))?
+        }
+    }
+    .build();
+
+    // Convert cli options to Node-tuple
+    let cli_start = match (opts.starting_point_y, opts.starting_point_x) {
+        (Some(y), Some(x)) => Some((y, x)),
+        _ => None,
+    };
+
+    let turns = match (opts.max_turns, turns) {
+        // Prefer cli option max_turns
+        (t @ Some(_), _) => t,
+        // But use Problem's max_turns if not present
+        (None, t @ Some(_)) => t,
+        // Or just don't limit at all
+        _ => None,
+    };
+
     let dfs = DepthFirstSearch::new(
-        search,
-        (opts.starting_point_y, opts.starting_point_x),
+        &graph,
+        cli_start.unwrap_or(start.unwrap_or_default()),
         turns,
-        opts,
+        opts.animate.then(|| opts.delay),
+        opts.first,
     );
 
     let routes = dfs.run();
@@ -417,6 +512,14 @@ fn main() {
         println!("{route}");
     }
     if routes.is_empty() {
-        println!("No route found for {turns} turns or less");
+        println!(
+            "No route found{}",
+            if let Some(turns) = turns {
+                format!(" for {turns} turns or less")
+            } else {
+                "".into()
+            }
+        );
     }
+    Ok(())
 }
