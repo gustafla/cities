@@ -506,7 +506,8 @@ fn main() -> Result<()> {
         opts.first,
     );
 
-    let routes = dfs.run();
+    let mut routes = dfs.run();
+    routes.sort_unstable_by_key(|e| std::cmp::Reverse(e.1));
     for (route, turns) in &routes {
         println!("With {turns} turns:");
         println!("{route}");

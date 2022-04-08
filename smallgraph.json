@@ -1,7 +1,6 @@
 {
   "size": 4,
   "start": [0, 3],
-  "max_turns": 7,
   "graph_ops": [
     "InterconnectAll",
     {"RemoveBidirectional": [[0,2],"East"]},
