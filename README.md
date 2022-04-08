@@ -1,3 +1,17 @@
+# Square Graph Depth First Search
+
+[![asciicast](https://asciinema.org/a/nOweNrVjZa3pLtkGODghVCJdw.svg)](https://asciinema.org/a/nOweNrVjZa3pLtkGODghVCJdw)
+
+[![asciicast](https://asciinema.org/a/WVPooUCsgsQ7MeUJTx05BdVOW.svg)](https://asciinema.org/a/WVPooUCsgsQ7MeUJTx05BdVOW)
+
+## Usage
+
+You can run a search on a built-in graph with `cargo run`.
+You can specify your own graph JSON with `--graph`.
+Refer to [smallgraph.json](smallgraph.json) for the format.
+Use the `--animate` (and `--delay`) option for animated output like above.
+See `--help` for the other options.
+
 ## Example run:
 
 ```

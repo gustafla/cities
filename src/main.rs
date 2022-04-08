@@ -320,7 +320,7 @@ impl<'a> DepthFirstSearch<'a> {
         first: bool,
     ) -> Self {
         Self {
-            search: Some(Search::new(&graph)),
+            search: Some(Search::new(graph)),
             from,
             max_turns,
             animate,
@@ -500,7 +500,7 @@ fn main() -> Result<()> {
 
     let dfs = DepthFirstSearch::new(
         &graph,
-        cli_start.unwrap_or(start.unwrap_or_default()),
+        cli_start.unwrap_or_else(|| start.unwrap_or_default()),
         turns,
         opts.animate.then(|| opts.delay),
         opts.first,
