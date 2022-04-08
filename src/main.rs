@@ -76,56 +76,73 @@ pub enum GraphOperation {
 pub struct IndexOutOfBoundsError;
 
 #[derive(Clone)]
-pub struct SquareGraph {
-    dimension: usize,
-    nodes: Vec<EdgeSet>,
+pub struct Square<T: Default + Clone> {
+    size: usize,
+    buf: Vec<T>,
 }
 
-impl SquareGraph {
+impl<T: Default + Clone> Square<T> {
+    fn new(size: usize) -> Self {
+        Self {
+            size,
+            buf: vec![Default::default(); size * size],
+        }
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+
     pub fn index(&self, node: Node) -> Option<usize> {
-        if node.0 < self.dimension && node.1 < self.dimension {
-            Some(node.0 * self.dimension + node.1)
+        if node.0 < self.size && node.1 < self.size {
+            Some(node.0 * self.size + node.1)
         } else {
             None
         }
     }
 
-    pub fn node(&self, node: Node) -> Option<&EdgeSet> {
-        self.index(node).and_then(|idx| self.nodes.get(idx))
+    pub fn get(&self, node: Node) -> Option<&T> {
+        self.index(node).and_then(|idx| self.buf.get(idx))
     }
 
-    fn node_mut(&mut self, node: Node) -> Option<&mut EdgeSet> {
-        self.index(node).and_then(|idx| self.nodes.get_mut(idx))
+    pub fn get_mut(&mut self, node: Node) -> Option<&mut T> {
+        self.index(node).and_then(|idx| self.buf.get_mut(idx))
     }
 
-    pub fn dimension(&self) -> usize {
-        self.dimension
+    pub fn set(&mut self, node: Node, value: T) -> Result<(), IndexOutOfBoundsError> {
+        if let Some(idx) = self.index(node) {
+            self.buf[idx] = value;
+            Ok(())
+        } else {
+            Err(IndexOutOfBoundsError)
+        }
     }
 
     pub fn neighbor(&self, ((y, x), dir): Edge) -> Option<Node> {
+        use Direction::*;
         match dir {
-            Direction::North => {
+            North => {
                 if y > 0 {
                     Some((y - 1, x))
                 } else {
                     None
                 }
             }
-            Direction::East => {
-                if x < self.dimension - 1 {
+            East => {
+                if x < self.size - 1 {
                     Some((y, x + 1))
                 } else {
                     None
                 }
             }
-            Direction::South => {
-                if y < self.dimension - 1 {
+            South => {
+                if y < self.size - 1 {
                     Some((y + 1, x))
                 } else {
                     None
                 }
             }
-            Direction::West => {
+            West => {
                 if x > 0 {
                     Some((y, x - 1))
                 } else {
@@ -134,45 +151,51 @@ impl SquareGraph {
             }
         }
     }
+}
 
+#[derive(Clone)]
+pub struct SquareGraph {
+    nodes: Square<EdgeSet>,
+}
+
+impl SquareGraph {
     fn bidirectional_edge_op(
         &mut self,
         (node, direction): &Edge,
         op: impl Fn(&mut EdgeSet, Direction),
     ) -> Result<(), IndexOutOfBoundsError> {
-        if let Some(neighbor) = self.neighbor((*node, *direction)) {
-            if let Some(edge_set) = self.node_mut(*node) {
+        if let Some(neighbor) = self.nodes.neighbor((*node, *direction)) {
+            if let Some(edge_set) = self.nodes.get_mut(*node) {
                 op(edge_set, *direction);
-                op(self.node_mut(neighbor).unwrap(), direction.inverse());
+                op(self.nodes.get_mut(neighbor).unwrap(), direction.inverse());
                 return Ok(());
             }
         }
         Err(IndexOutOfBoundsError)
     }
 
-    pub fn new(dimension: usize, config: &[GraphOperation]) -> Self {
+    pub fn new(size: usize, config: &[GraphOperation]) -> Self {
         let mut graph = Self {
-            dimension,
-            nodes: vec![Default::default(); dimension * dimension],
+            nodes: Square::new(size),
         };
 
         for op in config {
             match op {
                 GraphOperation::InterconnectAll => {
-                    for y in 0..dimension {
-                        for x in 0..dimension {
-                            let edge_set = graph.node_mut((y, x)).unwrap();
+                    for y in 0..size {
+                        for x in 0..size {
+                            let edge_set = graph.nodes.get_mut((y, x)).unwrap();
                             edge_set.fill();
                             if x == 0 {
                                 edge_set.remove(Direction::West);
                             }
-                            if x == dimension - 1 {
+                            if x == size - 1 {
                                 edge_set.remove(Direction::East);
                             }
                             if y == 0 {
                                 edge_set.remove(Direction::North);
                             }
-                            if y == dimension - 1 {
+                            if y == size - 1 {
                                 edge_set.remove(Direction::South);
                             }
                         }
@@ -195,56 +218,52 @@ impl SquareGraph {
 
         graph
     }
+
+    pub fn size(&self) -> usize {
+        self.nodes.size()
+    }
+
+    pub fn nodes(&self) -> &Square<EdgeSet> {
+        &self.nodes
+    }
 }
 
 #[derive(Clone)]
 struct Search<'a> {
     graph: &'a SquareGraph,
-    visited: Vec<bool>,
-    moves: Vec<Option<Direction>>,
+    visited: Square<bool>,
+    moves: Square<Option<Direction>>,
 }
 
 impl<'a> Search<'a> {
     pub fn new(graph: &'a SquareGraph) -> Self {
-        let dim = graph.dimension();
+        let size = graph.size();
         Self {
             graph,
-            visited: vec![false; dim * dim],
-            moves: vec![None; dim * dim],
+            visited: Square::new(size),
+            moves: Square::new(size),
         }
     }
 
-    pub fn index(&self, node: Node) -> Option<usize> {
-        self.graph.index(node)
-    }
-
-    fn update_visited(&self, node: Node) -> Result<Vec<bool>, IndexOutOfBoundsError> {
-        let idx = self.index(node).ok_or(IndexOutOfBoundsError)?;
+    fn update_visited(&self, node: Node) -> Result<Square<bool>, IndexOutOfBoundsError> {
         let mut visited = self.visited.clone();
-        visited[idx] = true;
+        visited.set(node, true)?;
         Ok(visited)
     }
 
-    fn has_visited_at(&self, node: Node) -> Result<bool, IndexOutOfBoundsError> {
-        let idx = self.index(node).ok_or(IndexOutOfBoundsError)?;
-        Ok(self.visited[idx])
-    }
-
     pub fn depth(&self) -> usize {
-        self.graph.dimension().pow(2)
+        self.graph.size().pow(2)
     }
 
     pub fn advance(&self, edge: Edge) -> Option<(Self, Node)> {
         let (node, direction) = edge;
-        if let Some(edge_set) = self.graph.node(node) {
+        if let Some(edge_set) = self.graph.nodes().get(node) {
             if edge_set.contains(direction) {
-                if let Some(into) = self.graph.neighbor(edge) {
-                    if let Ok(false) = self.has_visited_at(into) {
-                        let (node, direction) = edge;
-
+                if let Some(into) = self.graph.nodes().neighbor(edge) {
+                    if let Some(false) = self.visited.get(into) {
                         let visited = self.update_visited(node).unwrap();
                         let mut moves = self.moves.clone();
-                        moves[self.index(node).unwrap()] = Some(direction);
+                        moves.set(node, Some(direction)).unwrap();
 
                         return Some((
                             Self {
@@ -264,32 +283,28 @@ impl<'a> Search<'a> {
 
 impl<'a> std::fmt::Display for Search<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for y in 0..self.graph.dimension() {
-            for x in 0..self.graph.dimension() {
-                write!(f, "{}", self.graph.node((y, x)).unwrap())?;
+        use Direction::*;
+
+        for y in 0..self.graph.size() {
+            for x in 0..self.graph.size() {
+                write!(f, "{}", self.graph.nodes().get((y, x)).unwrap())?;
                 write!(
                     f,
                     "{}",
-                    match (
-                        self.index((y, x)).and_then(|idx| self.moves[idx]),
-                        self.index((y, x + 1)).and_then(|idx| self.moves[idx]),
-                    ) {
-                        (Some(Direction::East), _) | (_, Some(Direction::West)) => "───",
+                    match (self.moves.get((y, x)).unwrap(), self.moves.get((y, x + 1))) {
+                        (Some(East), _) | (_, Some(Some(West))) => "───",
                         _ => "   ",
                     }
                 )?;
             }
             writeln!(f)?;
-            if y < self.graph.dimension() - 1 {
-                for x in 0..self.graph.dimension() {
+            if y < self.graph.size() - 1 {
+                for x in 0..self.graph.size() {
                     write!(
                         f,
                         "{}",
-                        match (
-                            self.index((y, x)).and_then(|idx| self.moves[idx]),
-                            self.index((y + 1, x)).and_then(|idx| self.moves[idx]),
-                        ) {
-                            (Some(Direction::South), _) | (_, Some(Direction::North)) => "│   ",
+                        match (self.moves.get((y, x)).unwrap(), self.moves.get((y + 1, x))) {
+                            (Some(South), _) | (_, Some(Some(North))) => "│   ",
                             _ => "    ",
                         }
                     )?;
@@ -338,6 +353,8 @@ impl<'a> DepthFirstSearch<'a> {
         turns: usize,
         depth: usize,
     ) {
+        use Direction::*;
+
         if let Some(max) = self.max_turns {
             if turns > max {
                 return;
@@ -361,12 +378,7 @@ impl<'a> DepthFirstSearch<'a> {
             return;
         }
 
-        for dir in [
-            Direction::North,
-            Direction::East,
-            Direction::South,
-            Direction::West,
-        ] {
+        for dir in [North, East, South, West] {
             if let Some((search, node)) = search.advance((from, dir)) {
                 self.dfs(
                     search,
