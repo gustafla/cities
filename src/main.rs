@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Deserialize;
+use std::num::NonZeroU8;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -25,12 +26,12 @@ impl Direction {
 pub type Node = (usize, usize);
 pub type Edge = (Node, Direction);
 
-#[derive(Clone, Copy, Default)]
-pub struct EdgeSet(u8);
+#[derive(Clone, Copy)]
+pub struct EdgeSet(NonZeroU8);
 
 impl EdgeSet {
     pub fn all() -> Self {
-        Self(0b1111)
+        Self(NonZeroU8::new(0b1111).unwrap())
     }
 
     pub fn fill(&mut self) {
@@ -42,11 +43,20 @@ impl EdgeSet {
     }
 
     pub fn remove(&mut self, dir: Direction) {
-        self.0 &= (!(dir as u8)) & Self::all().0;
+        let current = self.0.get();
+        let all_but_dir = !(dir as u8);
+        let all = Self::all().0.get();
+        self.0 = NonZeroU8::new(current & (all_but_dir & all)).unwrap();
     }
 
     pub fn contains(&self, dir: Direction) -> bool {
-        self.0 & dir as u8 != 0
+        self.0.get() & dir as u8 != 0
+    }
+}
+
+impl Default for EdgeSet {
+    fn default() -> Self {
+        Self(NonZeroU8::new(0b10000).unwrap())
     }
 }
 
@@ -61,7 +71,7 @@ impl std::fmt::Display for EdgeSet {
             /* 0b1100 */ '┐', /* 0b1101 */ '┤', /* 0b1110 */ '┬',
             /* 0b1111 */ '┼',
         ];
-        f.write_char(charset[usize::from(self.0)])
+        f.write_char(charset[usize::from(self.0.get())])
     }
 }
 
