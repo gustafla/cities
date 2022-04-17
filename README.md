@@ -1,8 +1,6 @@
 # Square Graph Depth First Search
 
-[![asciicast](https://asciinema.org/a/nOweNrVjZa3pLtkGODghVCJdw.svg)](https://asciinema.org/a/nOweNrVjZa3pLtkGODghVCJdw)
-
-[![asciicast](https://asciinema.org/a/WVPooUCsgsQ7MeUJTx05BdVOW.svg)](https://asciinema.org/a/WVPooUCsgsQ7MeUJTx05BdVOW)
+[![asciicast](https://asciinema.org/a/0JnokMBnHQCfwsxWEGP3hDbG1.svg)](https://asciinema.org/a/0JnokMBnHQCfwsxWEGP3hDbG1)
 
 ## Usage
 
